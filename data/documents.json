@@ -1,0 +1,22 @@
+[
+  {"id": "doc-001", "phrase1": "Machine learning models can predict outcomes", "phrase2": "Neural networks learn patterns from data", "metadata": {"category": "tech"}},
+  {"id": "doc-002", "phrase1": "Climate change affects global temperatures", "phrase2": "Rising sea levels threaten coastal cities", "metadata": {"category": "environment"}},
+  {"id": "doc-003", "phrase1": "Healthy eating improves overall wellbeing", "phrase2": "A balanced diet includes fruits and vegetables", "metadata": {"category": "health"}},
+  {"id": "doc-004", "phrase1": "Space missions explore distant planets", "phrase2": "NASA launches rockets into orbit", "metadata": {"category": "science"}},
+  {"id": "doc-005", "phrase1": "Stock markets fluctuate based on investor sentiment", "phrase2": "Financial analysts study economic indicators", "metadata": {"category": "finance"}},
+  {"id": "doc-006", "phrase1": "Quantum computers use qubits for computation", "phrase2": "Superposition allows parallel processing of states", "metadata": {"category": "tech"}},
+  {"id": "doc-007", "phrase1": "Solar panels convert sunlight to electricity", "phrase2": "Renewable energy reduces carbon emissions", "metadata": {"category": "environment"}},
+  {"id": "doc-008", "phrase1": "Web applications use JavaScript frameworks", "phrase2": "Frontend development requires HTML and CSS knowledge", "metadata": {"category": "tech"}},
+  {"id": "doc-009", "phrase1": "Dogs are loyal companions to humans", "phrase2": "Pets provide emotional support and comfort", "metadata": {"category": "lifestyle"}},
+  {"id": "doc-010", "phrase1": "Electric vehicles reduce air pollution", "phrase2": "Battery technology improves driving range", "metadata": {"category": "tech"}},
+  {"id": "doc-011", "phrase1": "Music therapy helps with stress relief", "phrase2": "Playing instruments improves cognitive function", "metadata": {"category": "health"}},
+  {"id": "doc-012", "phrase1": "Deep learning requires large datasets", "phrase2": "Training neural networks needs GPU acceleration", "metadata": {"category": "tech"}},
+  {"id": "doc-013", "phrase1": "Ocean currents influence weather patterns", "phrase2": "Marine ecosystems depend on water temperature", "metadata": {"category": "environment"}},
+  {"id": "doc-014", "phrase1": "Yoga promotes flexibility and mindfulness", "phrase2": "Meditation reduces anxiety and improves focus", "metadata": {"category": "health"}},
+  {"id": "doc-015", "phrase1": "Cryptography secures digital communications", "phrase2": "Encryption algorithms protect sensitive data", "metadata": {"category": "tech"}},
+  {"id": "doc-016", "phrase1": "Agriculture uses precision farming techniques", "phrase2": "Drones monitor crop health from above", "metadata": {"category": "science"}},
+  {"id": "doc-017", "phrase1": "Cats are independent and curious animals", "phrase2": "Felines have excellent night vision", "metadata": {"category": "lifestyle"}},
+  {"id": "doc-018", "phrase1": "Robotics automates manufacturing processes", "phrase2": "Industrial robots improve production efficiency", "metadata": {"category": "tech"}},
+  {"id": "doc-019", "phrase1": "Vaccines prevent infectious diseases", "phrase2": "Immunization programs protect public health", "metadata": {"category": "health"}},
+  {"id": "doc-020", "phrase1": "Blockchain enables decentralized transactions", "phrase2": "Distributed ledgers ensure data transparency", "metadata": {"category": "tech"}}
+]
