@@ -22,6 +22,7 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
     private final boolean hasTokenTypeIds;
     private final String queryPrefix;
     private final String documentPrefix;
+    private final String hiddenStateOutputName;
 
     public OnnxEmbeddingModel(Path modelDir) throws OrtException, IOException {
         this(modelDir, "", "");
@@ -37,16 +38,41 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
         Set<String> inputNames = session.getInputNames();
         this.hasTokenTypeIds = inputNames.contains("token_type_ids");
 
-        // Detect dimensions by running a probe embedding
+        // Find the 3D output (last_hidden_state) by probing
+        this.hiddenStateOutputName = detectHiddenStateOutput();
         this.dimensions = detectDimensions();
+    }
+
+    private String detectHiddenStateOutput() {
+        try {
+            Encoding[] encodings = tokenizer.batchEncode(new String[] { "probe" });
+            Map<String, OnnxTensor> inputs = buildTensors(encodings, encodings[0].getIds().length);
+            try (OrtSession.Result result = session.run(inputs)) {
+                // Find the output that is 3D [batch, seq, hidden] — that's last_hidden_state
+                for (Map.Entry<String, ai.onnxruntime.OnnxValue> entry : result) {
+                    Object value = entry.getValue().getValue();
+                    if (value instanceof float[][][]) {
+                        return entry.getKey();
+                    }
+                }
+                // Fallback: use first output
+                return result.iterator().next().getKey();
+            } finally {
+                for (OnnxTensor tensor : inputs.values()) {
+                    tensor.close();
+                }
+            }
+        } catch (OrtException e) {
+            throw new RuntimeException("Failed to detect hidden state output", e);
+        }
     }
 
     private int detectDimensions() {
         try {
-            Encoding[] encodings = tokenizer.batchEncode(new String[]{"probe"});
+            Encoding[] encodings = tokenizer.batchEncode(new String[] { "probe" });
             Map<String, OnnxTensor> inputs = buildTensors(encodings, encodings[0].getIds().length);
             try (OrtSession.Result result = session.run(inputs)) {
-                float[][][] output = (float[][][]) result.get(0).getValue();
+                float[][][] output = (float[][][]) result.get(hiddenStateOutputName).get().getValue();
                 return output[0][0].length;
             } finally {
                 for (OnnxTensor tensor : inputs.values()) {
@@ -83,7 +109,7 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
             }
 
             try (OrtSession.Result result = session.run(inputs)) {
-                float[][][] output = (float[][][]) result.get(0).getValue();
+                float[][][] output = (float[][][]) result.get(hiddenStateOutputName).get().getValue();
 
                 float[][] embeddings = new float[batchSize][];
                 for (int i = 0; i < batchSize; i++) {

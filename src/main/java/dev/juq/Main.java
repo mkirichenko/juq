@@ -88,8 +88,9 @@ public class Main {
         return switch (modelName) {
             case "minilm" -> new OnnxEmbeddingModel(modelDir);
             case "e5-small" -> new OnnxEmbeddingModel(modelDir, "query: ", "passage: ");
+            case "berta" -> new OnnxEmbeddingModel(modelDir, "search_query: ", "search_document: ");
             default -> throw new IllegalArgumentException(
-                "Unknown model: " + modelName + ". Available: minilm, e5-small");
+                "Unknown model: " + modelName + ". Available: minilm, e5-small, berta");
         };
     }
 
@@ -98,7 +99,7 @@ public class Main {
             Usage: juq [options]
               --data <path>         Path to documents.json (default: data/documents.json)
               --model <path>        Base model directory (default: model/)
-              --model-name <name>   Model to use: minilm, e5-small (default: minilm)
+              --model-name <name>   Model to use: minilm, e5-small, berta (default: minilm)
               --query <text>        Search query
               --top-k <n>           Number of results (default: 5)
               --strategy <name>     CONCATENATE|AVERAGE|MAX_SIM (default: CONCATENATE)
