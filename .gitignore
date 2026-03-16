@@ -35,5 +35,8 @@ target/
 .settings/
 
 # Model files (large, downloaded separately)
-model/*.onnx
-model/*.bin
+model/
+
+# Misc
+*.txt
+.DS_Store

@@ -26,22 +26,23 @@ public class DocumentSearchEngine {
             int docId = nextId++;
             documents.put(docId, doc);
 
+            String prefix = model.documentPrefix();
             switch (strategy) {
                 case CONCATENATE -> {
-                    String combined = doc.phrase1() + ". " + doc.phrase2();
+                    String combined = prefix + doc.phrase1() + ". " + doc.phrase2();
                     float[] vector = model.embed(combined);
                     index.add(docId, vector);
                 }
                 case AVERAGE -> {
-                    float[] v1 = model.embed(doc.phrase1());
-                    float[] v2 = model.embed(doc.phrase2());
+                    float[] v1 = model.embed(prefix + doc.phrase1());
+                    float[] v2 = model.embed(prefix + doc.phrase2());
                     float[] avg = average(v1, v2);
                     l2Normalize(avg);
                     index.add(docId, avg);
                 }
                 case MAX_SIM -> {
-                    float[] v1 = model.embed(doc.phrase1());
-                    float[] v2 = model.embed(doc.phrase2());
+                    float[] v1 = model.embed(prefix + doc.phrase1());
+                    float[] v2 = model.embed(prefix + doc.phrase2());
                     index.add(docId, v1);
                     index.add(docId, v2);
                 }
@@ -50,7 +51,7 @@ public class DocumentSearchEngine {
     }
 
     public List<SearchResult> search(String query, int topK) {
-        float[] queryVector = model.embed(query);
+        float[] queryVector = model.embed(model.queryPrefix() + query);
 
         if (strategy == PhraseStrategy.MAX_SIM) {
             // Fetch more results since there are 2 entries per doc, then deduplicate

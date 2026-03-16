@@ -6,27 +6,56 @@ import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
-
 import java.io.IOException;
-import java.nio.LongBuffer;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public class OnnxEmbeddingModel implements EmbeddingModel {
-
-    private static final int DIMENSIONS = 384;
 
     private final OrtEnvironment env;
     private final OrtSession session;
     private final HuggingFaceTokenizer tokenizer;
+    private final int dimensions;
+    private final boolean hasTokenTypeIds;
+    private final String queryPrefix;
+    private final String documentPrefix;
 
     public OnnxEmbeddingModel(Path modelDir) throws OrtException, IOException {
+        this(modelDir, "", "");
+    }
+
+    public OnnxEmbeddingModel(Path modelDir, String queryPrefix, String documentPrefix) throws OrtException, IOException {
         this.env = OrtEnvironment.getEnvironment();
         this.session = env.createSession(modelDir.resolve("model.onnx").toString());
         this.tokenizer = HuggingFaceTokenizer.newInstance(modelDir.resolve("tokenizer.json"));
+        this.queryPrefix = queryPrefix;
+        this.documentPrefix = documentPrefix;
+
+        Set<String> inputNames = session.getInputNames();
+        this.hasTokenTypeIds = inputNames.contains("token_type_ids");
+
+        // Detect dimensions by running a probe embedding
+        this.dimensions = detectDimensions();
+    }
+
+    private int detectDimensions() {
+        try {
+            Encoding[] encodings = tokenizer.batchEncode(new String[]{"probe"});
+            Map<String, OnnxTensor> inputs = buildTensors(encodings, encodings[0].getIds().length);
+            try (OrtSession.Result result = session.run(inputs)) {
+                float[][][] output = (float[][][]) result.get(0).getValue();
+                return output[0][0].length;
+            } finally {
+                for (OnnxTensor tensor : inputs.values()) {
+                    tensor.close();
+                }
+            }
+        } catch (OrtException e) {
+            throw new RuntimeException("Failed to detect model dimensions", e);
+        }
     }
 
     @Override
@@ -45,23 +74,13 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
                 maxLen = Math.max(maxLen, (int) enc.getIds().length);
             }
 
-            long[][] inputIds = new long[batchSize][maxLen];
+            Map<String, OnnxTensor> inputs = buildTensors(encodings, maxLen);
+
             long[][] attentionMask = new long[batchSize][maxLen];
-            long[][] tokenTypeIds = new long[batchSize][maxLen];
-
             for (int i = 0; i < batchSize; i++) {
-                long[] ids = encodings[i].getIds();
                 long[] mask = encodings[i].getAttentionMask();
-                long[] types = encodings[i].getTypeIds();
-                System.arraycopy(ids, 0, inputIds[i], 0, ids.length);
                 System.arraycopy(mask, 0, attentionMask[i], 0, mask.length);
-                System.arraycopy(types, 0, tokenTypeIds[i], 0, types.length);
             }
-
-            Map<String, OnnxTensor> inputs = new HashMap<>();
-            inputs.put("input_ids", OnnxTensor.createTensor(env, inputIds));
-            inputs.put("attention_mask", OnnxTensor.createTensor(env, attentionMask));
-            inputs.put("token_type_ids", OnnxTensor.createTensor(env, tokenTypeIds));
 
             try (OrtSession.Result result = session.run(inputs)) {
                 float[][][] output = (float[][][]) result.get(0).getValue();
@@ -82,21 +101,49 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
         }
     }
 
+    private Map<String, OnnxTensor> buildTensors(Encoding[] encodings, int maxLen) throws OrtException {
+        int batchSize = encodings.length;
+        long[][] inputIds = new long[batchSize][maxLen];
+        long[][] attentionMask = new long[batchSize][maxLen];
+
+        for (int i = 0; i < batchSize; i++) {
+            long[] ids = encodings[i].getIds();
+            long[] mask = encodings[i].getAttentionMask();
+            System.arraycopy(ids, 0, inputIds[i], 0, ids.length);
+            System.arraycopy(mask, 0, attentionMask[i], 0, mask.length);
+        }
+
+        Map<String, OnnxTensor> inputs = new HashMap<>();
+        inputs.put("input_ids", OnnxTensor.createTensor(env, inputIds));
+        inputs.put("attention_mask", OnnxTensor.createTensor(env, attentionMask));
+
+        if (hasTokenTypeIds) {
+            long[][] tokenTypeIds = new long[batchSize][maxLen];
+            for (int i = 0; i < batchSize; i++) {
+                long[] types = encodings[i].getTypeIds();
+                System.arraycopy(types, 0, tokenTypeIds[i], 0, types.length);
+            }
+            inputs.put("token_type_ids", OnnxTensor.createTensor(env, tokenTypeIds));
+        }
+
+        return inputs;
+    }
+
     private float[] meanPool(float[][] tokenEmbeddings, long[] attentionMask, int seqLen) {
-        float[] pooled = new float[DIMENSIONS];
+        float[] pooled = new float[dimensions];
         float maskSum = 0;
 
         for (int t = 0; t < seqLen; t++) {
             if (attentionMask[t] == 1) {
                 maskSum++;
-                for (int d = 0; d < DIMENSIONS; d++) {
+                for (int d = 0; d < dimensions; d++) {
                     pooled[d] += tokenEmbeddings[t][d];
                 }
             }
         }
 
         if (maskSum > 0) {
-            for (int d = 0; d < DIMENSIONS; d++) {
+            for (int d = 0; d < dimensions; d++) {
                 pooled[d] /= maskSum;
             }
         }
@@ -119,7 +166,17 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
 
     @Override
     public int dimensions() {
-        return DIMENSIONS;
+        return dimensions;
+    }
+
+    @Override
+    public String queryPrefix() {
+        return queryPrefix;
+    }
+
+    @Override
+    public String documentPrefix() {
+        return documentPrefix;
     }
 
     @Override

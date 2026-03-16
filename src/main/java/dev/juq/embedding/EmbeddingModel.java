@@ -9,4 +9,8 @@ public interface EmbeddingModel extends AutoCloseable {
     float[][] embedBatch(List<String> texts);
 
     int dimensions();
+
+    default String queryPrefix() { return ""; }
+
+    default String documentPrefix() { return ""; }
 }

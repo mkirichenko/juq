@@ -1,28 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_DIR="${1:-model}"
-mkdir -p "$MODEL_DIR"
+BASE_DIR="${1:-model}"
 
-echo "Downloading all-MiniLM-L6-v2 ONNX model..."
+download_file() {
+    local dir="$1" file="$2" url="$3"
+    if [ ! -f "$dir/$file" ]; then
+        echo "  Downloading $file..."
+        curl -L -o "$dir/$file" "$url"
+    else
+        echo "  $file already exists, skipping."
+    fi
+}
 
-# Tokenizer
-if [ ! -f "$MODEL_DIR/tokenizer.json" ]; then
-    echo "  Downloading tokenizer.json..."
-    curl -L -o "$MODEL_DIR/tokenizer.json" \
-        "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
-else
-    echo "  tokenizer.json already exists, skipping."
-fi
+# --- all-MiniLM-L6-v2 ---
+echo "=== all-MiniLM-L6-v2 (minilm) ==="
+MINILM_DIR="$BASE_DIR/minilm"
+mkdir -p "$MINILM_DIR"
+download_file "$MINILM_DIR" "tokenizer.json" \
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+download_file "$MINILM_DIR" "model.onnx" \
+    "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+echo "Done: $(du -sh "$MINILM_DIR" | cut -f1)"
+echo
 
-# ONNX model
-if [ ! -f "$MODEL_DIR/model.onnx" ]; then
-    echo "  Downloading model.onnx (~90MB)..."
-    curl -L -o "$MODEL_DIR/model.onnx" \
-        "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
-else
-    echo "  model.onnx already exists, skipping."
-fi
+# --- multilingual-e5-small ---
+echo "=== multilingual-e5-small (e5-small) ==="
+E5_DIR="$BASE_DIR/e5-small"
+mkdir -p "$E5_DIR"
+download_file "$E5_DIR" "tokenizer.json" \
+    "https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/tokenizer.json"
+download_file "$E5_DIR" "model.onnx" \
+    "https://huggingface.co/intfloat/multilingual-e5-small/resolve/main/onnx/model.onnx"
+echo "Done: $(du -sh "$E5_DIR" | cut -f1)"
+echo
 
-echo "Done. Model files are in $MODEL_DIR/"
-ls -lh "$MODEL_DIR"
+echo "All models downloaded to $BASE_DIR/"
+ls -lhR "$BASE_DIR"
