@@ -19,6 +19,7 @@ public class Main {
         String dataPath = "data/documents.json";
         String modelPath = "model";
         String modelName = "minilm";
+        String modelFile = "model.onnx";
         String query = null;
         int topK = 5;
         PhraseStrategy strategy = PhraseStrategy.CONCATENATE;
@@ -29,6 +30,7 @@ public class Main {
                 case "--data" -> dataPath = args[++i];
                 case "--model" -> modelPath = args[++i];
                 case "--model-name" -> modelName = args[++i].toLowerCase();
+                case "--model-file" -> modelFile = args[++i];
                 case "--query" -> query = args[++i];
                 case "--top-k" -> topK = Integer.parseInt(args[++i]);
                 case "--strategy" -> strategy = PhraseStrategy.valueOf(args[++i].toUpperCase());
@@ -50,7 +52,7 @@ public class Main {
         System.out.printf("Loading model '%s' from %s ...%n", modelName, modelDir);
         long t0 = System.currentTimeMillis();
 
-        try (EmbeddingModel model = createModel(modelName, modelDir)) {
+        try (EmbeddingModel model = createModel(modelName, modelDir, modelFile)) {
             long modelLoadMs = System.currentTimeMillis() - t0;
             System.out.printf("Model loaded in %d ms (dimensions: %d)%n", modelLoadMs, model.dimensions());
 
@@ -84,11 +86,11 @@ public class Main {
         }
     }
 
-    private static EmbeddingModel createModel(String modelName, Path modelDir) throws Exception {
+    private static EmbeddingModel createModel(String modelName, Path modelDir, String modelFile) throws Exception {
         return switch (modelName) {
-            case "minilm" -> new OnnxEmbeddingModel(modelDir);
-            case "e5-small" -> new OnnxEmbeddingModel(modelDir, "query: ", "passage: ");
-            case "berta" -> new OnnxEmbeddingModel(modelDir, "search_query: ", "search_document: ");
+            case "minilm" -> new OnnxEmbeddingModel(modelDir, modelFile, "", "");
+            case "e5-small" -> new OnnxEmbeddingModel(modelDir, modelFile, "query: ", "passage: ");
+            case "berta" -> new OnnxEmbeddingModel(modelDir, modelFile, "search_query: ", "search_document: ");
             default -> throw new IllegalArgumentException(
                 "Unknown model: " + modelName + ". Available: minilm, e5-small, berta");
         };
@@ -100,6 +102,7 @@ public class Main {
               --data <path>         Path to documents.json (default: data/documents.json)
               --model <path>        Base model directory (default: model/)
               --model-name <name>   Model to use: minilm, e5-small, berta (default: minilm)
+              --model-file <name>   ONNX model filename (default: model.onnx)
               --query <text>        Search query
               --top-k <n>           Number of results (default: 5)
               --strategy <name>     CONCATENATE|AVERAGE|MAX_SIM (default: CONCATENATE)

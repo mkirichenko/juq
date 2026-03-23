@@ -29,8 +29,12 @@ public class OnnxEmbeddingModel implements EmbeddingModel {
     }
 
     public OnnxEmbeddingModel(Path modelDir, String queryPrefix, String documentPrefix) throws OrtException, IOException {
+        this(modelDir, "model.onnx", queryPrefix, documentPrefix);
+    }
+
+    public OnnxEmbeddingModel(Path modelDir, String modelFileName, String queryPrefix, String documentPrefix) throws OrtException, IOException {
         this.env = OrtEnvironment.getEnvironment();
-        this.session = env.createSession(modelDir.resolve("model.onnx").toString());
+        this.session = env.createSession(modelDir.resolve(modelFileName).toString());
         this.tokenizer = HuggingFaceTokenizer.newInstance(modelDir.resolve("tokenizer.json"));
         this.queryPrefix = queryPrefix;
         this.documentPrefix = documentPrefix;
