@@ -37,6 +37,12 @@ target/
 # Model files (large, downloaded separately)
 model/
 
+# C build artifacts
+c/build/
+
+# Rust build artifacts
+rust/target/
+
 # Misc
 *.txt
 .DS_Store
