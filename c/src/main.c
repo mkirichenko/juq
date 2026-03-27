@@ -1,6 +1,9 @@
 #include "bert.h"
 #include "cjson.h"
 #include "simd_ops.h"
+#ifdef USE_ONNX
+#include "onnx_backend.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -435,7 +438,9 @@ static void run_benchmark(bert_embedder_t *embedder, const document_t *docs, int
 static void usage(void) {
     fprintf(stderr, "Usage: juq [options]\n");
     fprintf(stderr, "  --data <path>           Path to documents.json\n");
-    fprintf(stderr, "  --model <path>          Model directory with .gguf and tokenizer.json\n");
+    fprintf(stderr, "  --model <path>          Model directory\n");
+    fprintf(stderr, "  --backend <name>        gguf or onnx (default: gguf)\n");
+    fprintf(stderr, "  --model-file <name>     ONNX model filename (default: model.onnx)\n");
     fprintf(stderr, "  --query <text>          Search query\n");
     fprintf(stderr, "  --top-k <n>             Number of results (default: 5)\n");
     fprintf(stderr, "  --strategy <name>       concatenate|average|max_sim\n");
@@ -449,6 +454,8 @@ int main(int argc, char **argv) {
     const char *data_path = "data/documents.json";
     const char *model_dir = "model/berta";
     const char *query = NULL;
+    const char *backend = "gguf";
+    const char *model_file __attribute__((unused)) = NULL;
     int top_k = 5;
     phrase_strategy_t strategy = STRATEGY_CONCATENATE;
     int benchmark = 0;
@@ -458,6 +465,8 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--data") == 0 && i + 1 < argc) { data_path = argv[++i]; }
         else if ((strcmp(argv[i], "--model") == 0 || strcmp(argv[i], "--model-dir") == 0) && i + 1 < argc) { model_dir = argv[++i]; }
+        else if (strcmp(argv[i], "--backend") == 0 && i + 1 < argc) { backend = argv[++i]; }
+        else if (strcmp(argv[i], "--model-file") == 0 && i + 1 < argc) { model_file = argv[++i]; }
         else if (strcmp(argv[i], "--query") == 0 && i + 1 < argc) { query = argv[++i]; }
         else if (strcmp(argv[i], "--top-k") == 0 && i + 1 < argc) { top_k = atoi(argv[++i]); }
         else if (strcmp(argv[i], "--strategy") == 0 && i + 1 < argc) { strategy = parse_strategy(argv[++i]); }
@@ -470,8 +479,22 @@ int main(int argc, char **argv) {
     if (!benchmark && !query) usage();
 
     double t0 = time_ms();
-    printf("Loading model from %s ...\n", model_dir);
-    bert_embedder_t *embedder = bert_embedder_load(model_dir, query_prefix, doc_prefix);
+    printf("Loading model from %s (backend: %s) ...\n", model_dir, backend);
+
+    bert_embedder_t *embedder = NULL;
+    if (strcasecmp(backend, "onnx") == 0) {
+#ifdef USE_ONNX
+        embedder = onnx_embedder_load(model_dir, model_file, query_prefix, doc_prefix);
+#else
+        fprintf(stderr, "ONNX backend not compiled. Rebuild with: make onnx\n");
+        return 1;
+#endif
+    } else if (strcasecmp(backend, "gguf") == 0) {
+        embedder = bert_embedder_load(model_dir, query_prefix, doc_prefix);
+    } else {
+        fprintf(stderr, "Unknown backend: %s (use: gguf, onnx)\n", backend);
+        return 1;
+    }
     if (!embedder) { fprintf(stderr, "Failed to load model\n"); return 1; }
     printf("Model loaded in %.0f ms (dimensions: %d)\n", time_ms() - t0, embedder->dims);
 

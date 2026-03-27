@@ -78,7 +78,6 @@ static linear_t load_linear(gguf_ctx_t *ctx, const char *w_name, const char *b_n
     float *raw_weight = load_tensor_data(ctx, w_name, &n_w);
 
     /* GGUF stores weights as [out_features x in_features] already (row-major) */
-    /* But we need transposed for our matmul: input [seq x in] * W^T [in x out] = [seq x out] */
     /* Store as [out x in] for mat_vec_mul / direct access */
     l.weight = raw_weight;
 
@@ -158,9 +157,8 @@ bert_model_t *bert_model_load(gguf_ctx_t *ctx) {
             LAYER_TENSOR("blk.%d.attn_output_norm.bias"), NULL);
 
         /* FFN: up projects hidden -> intermediate, down projects back */
-        /* Get intermediate size from the tensor dimensions */
         snprintf(name, sizeof(name), "blk.%d.ffn_up.weight", i);
-        int intermediate_size = m->hidden_size; /* default */
+        int intermediate_size = m->hidden_size;
         for (uint64_t t = 0; t < ctx->n_tensors; t++) {
             if (strcmp(ctx->tensor_infos[t].name, name) == 0) {
                 intermediate_size = (int)ctx->tensor_infos[t].dims[1];
@@ -224,8 +222,6 @@ static float *linear_forward(const linear_t *l, const float *input, int seq_len)
     int in = l->in_features;
     float *output = malloc((size_t)seq_len * out * sizeof(float));
 
-    /* For each position, compute output = input * W^T + bias
-     * W is stored as [out x in], so we do mat_vec_mul for each position */
     for (int s = 0; s < seq_len; s++) {
         mat_vec_mul(l->weight, input + s * in, output + s * out, out, in);
     }
@@ -257,7 +253,7 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
                normed, seq_len, H, m->layer_norm_eps);
     free(embeddings);
 
-    float *x = normed;  /* current hidden states [seq_len x H] */
+    float *x = normed;
 
     /* 2. Transformer layers */
     for (int li = 0; li < m->num_layers; li++) {
@@ -265,21 +261,14 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
         int heads = layer->num_heads;
         int hd = layer->head_dim;
 
-        /* Self-attention: Q, K, V projections */
-        float *Q = linear_forward(&layer->query, x, seq_len);   /* [seq x H] */
+        float *Q = linear_forward(&layer->query, x, seq_len);
         float *K = linear_forward(&layer->key, x, seq_len);
         float *V = linear_forward(&layer->value, x, seq_len);
 
-        /* Compute attention per head */
         float scale = 1.0f / sqrtf((float)hd);
         float *attn_out = calloc((size_t)seq_len * H, sizeof(float));
 
         for (int h = 0; h < heads; h++) {
-            /* Extract head slices and compute scores */
-            /* Q_h[s] = Q[s * H + h * hd ... + hd] */
-            /* scores[i][j] = sum_d Q_h[i][d] * K_h[j][d] * scale */
-
-            /* Compute attention scores for this head */
             float *scores = malloc((size_t)seq_len * seq_len * sizeof(float));
             for (int i = 0; i < seq_len; i++) {
                 const float *qi = Q + i * H + h * hd;
@@ -289,12 +278,10 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
                 }
             }
 
-            /* Softmax per row */
             for (int i = 0; i < seq_len; i++) {
                 vec_softmax(scores + i * seq_len, seq_len);
             }
 
-            /* Weighted sum of values */
             for (int i = 0; i < seq_len; i++) {
                 float *out = attn_out + i * H + h * hd;
                 for (int j = 0; j < seq_len; j++) {
@@ -312,11 +299,9 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
         free(K);
         free(V);
 
-        /* Attention output projection */
         float *attn_proj = linear_forward(&layer->attn_output, attn_out, seq_len);
         free(attn_out);
 
-        /* Residual + LayerNorm */
         float *residual1 = malloc((size_t)seq_len * H * sizeof(float));
         for (int i = 0; i < seq_len * H; i++) {
             residual1[i] = x[i] + attn_proj[i];
@@ -329,7 +314,6 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
                    normed1, seq_len, H, m->layer_norm_eps);
         free(residual1);
 
-        /* Feed-forward network */
         float *ffn_up = linear_forward(&layer->ffn_up, normed1, seq_len);
         int intermediate = layer->ffn_up.out_features;
         vec_gelu(ffn_up, (size_t)seq_len * intermediate);
@@ -337,7 +321,6 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
         float *ffn_down = linear_forward(&layer->ffn_down, ffn_up, seq_len);
         free(ffn_up);
 
-        /* Residual + LayerNorm */
         float *residual2 = malloc((size_t)seq_len * H * sizeof(float));
         for (int i = 0; i < seq_len * H; i++) {
             residual2[i] = normed1[i] + ffn_down[i];
@@ -355,13 +338,13 @@ float *bert_forward(const bert_model_t *m, const uint32_t *input_ids,
         x = normed2;
     }
 
-    return x;  /* [seq_len x H] */
+    return x;
 }
 
 /* ---- Mean pooling ---- */
 
-static float *mean_pool(const float *hidden, const uint32_t *attention_mask,
-                         int seq_len, int hidden_size) {
+static float *gguf_mean_pool(const float *hidden, const uint32_t *attention_mask,
+                              int seq_len, int hidden_size) {
     float *pooled = calloc(hidden_size, sizeof(float));
     float count = 0.0f;
 
@@ -384,7 +367,28 @@ static float *mean_pool(const float *hidden, const uint32_t *attention_mask,
     return pooled;
 }
 
-/* ---- Embedder ---- */
+/* ---- GGUF backend embed function ---- */
+
+static float *gguf_embed_fn(bert_embedder_t *emb, const char *text) {
+    bert_model_t *model = (bert_model_t *)emb->backend_data;
+    token_encoding_t *enc = tokenizer_encode(emb->tokenizer, text);
+    if (!enc) return NULL;
+
+    float *hidden = bert_forward(model, enc->ids, enc->type_ids, (int)enc->length);
+    float *pooled = gguf_mean_pool(hidden, enc->attention_mask,
+                                    (int)enc->length, emb->dims);
+    free(hidden);
+    token_encoding_free(enc);
+
+    vec_l2_normalize(pooled, emb->dims);
+    return pooled;
+}
+
+static void gguf_free_fn(bert_embedder_t *emb) {
+    bert_model_free((bert_model_t *)emb->backend_data);
+}
+
+/* ---- GGUF Embedder loader ---- */
 
 bert_embedder_t *bert_embedder_load(const char *model_dir,
                                      const char *query_prefix,
@@ -428,45 +432,33 @@ bert_embedder_t *bert_embedder_load(const char *model_dir,
     }
 
     bert_embedder_t *emb = calloc(1, sizeof(bert_embedder_t));
-    emb->model = model;
+    emb->backend_data = model;
     emb->tokenizer = tokenizer;
     emb->query_prefix = strdup(query_prefix);
     emb->doc_prefix = strdup(doc_prefix);
-
-    /* Probe dimensions */
-    float *probe = bert_embed(emb, "probe");
     emb->dims = bert_hidden_size(model);
-    free(probe);
+    emb->embed_fn = gguf_embed_fn;
+    emb->free_fn = gguf_free_fn;
 
     return emb;
 }
 
+/* ---- Common interface ---- */
+
 void bert_embedder_free(bert_embedder_t *emb) {
     if (!emb) return;
-    bert_model_free(emb->model);
+    if (emb->free_fn) emb->free_fn(emb);
     tokenizer_free(emb->tokenizer);
     free(emb->query_prefix);
     free(emb->doc_prefix);
     free(emb);
 }
 
-float *bert_embed(const bert_embedder_t *emb, const char *text) {
-    token_encoding_t *enc = tokenizer_encode(emb->tokenizer, text);
-    if (!enc) return NULL;
-
-    float *hidden = bert_forward(emb->model, enc->ids, enc->type_ids,
-                                  (int)enc->length);
-
-    float *pooled = mean_pool(hidden, enc->attention_mask,
-                               (int)enc->length, emb->dims);
-    free(hidden);
-    token_encoding_free(enc);
-
-    vec_l2_normalize(pooled, emb->dims);
-    return pooled;
+float *bert_embed(bert_embedder_t *emb, const char *text) {
+    return emb->embed_fn(emb, text);
 }
 
-float *bert_embed_query(const bert_embedder_t *emb, const char *query) {
+float *bert_embed_query(bert_embedder_t *emb, const char *query) {
     size_t plen = strlen(emb->query_prefix);
     size_t qlen = strlen(query);
     char *text = malloc(plen + qlen + 1);
@@ -477,7 +469,7 @@ float *bert_embed_query(const bert_embedder_t *emb, const char *query) {
     return result;
 }
 
-float *bert_embed_document(const bert_embedder_t *emb, const char *doc) {
+float *bert_embed_document(bert_embedder_t *emb, const char *doc) {
     size_t plen = strlen(emb->doc_prefix);
     size_t dlen = strlen(doc);
     char *text = malloc(plen + dlen + 1);
