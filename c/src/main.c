@@ -360,22 +360,17 @@ static double time_ms(void) {
 
 /* ---- Benchmark ---- */
 
-static const char *SAMPLE_QUERIES[] = {
-    "machine learning algorithms",
-    "climate change impact",
-    "software engineering best practices",
-    "healthy cooking recipes",
-    "space exploration missions",
-    "financial market analysis",
-    "artificial intelligence ethics",
-    "renewable energy sources",
-    "modern web development",
-    "quantum computing applications",
-};
-#define NUM_QUERIES 10
+#define MAX_BENCH_QUERIES 10
 
 static void run_benchmark(bert_embedder_t *embedder, const document_t *docs, int n_docs) {
     printf("\n=== BENCHMARK ===\n\n");
+
+    /* Use phrase1 from documents as queries (works with any language) */
+    int num_queries = n_docs < MAX_BENCH_QUERIES ? n_docs : MAX_BENCH_QUERIES;
+    const char *queries[MAX_BENCH_QUERIES];
+    for (int i = 0; i < num_queries; i++) {
+        queries[i] = docs[i].phrase1;
+    }
 
     phrase_strategy_t strategies[] = { STRATEGY_CONCATENATE, STRATEGY_AVERAGE, STRATEGY_MAX_SIM };
 
@@ -393,25 +388,25 @@ static void run_benchmark(bert_embedder_t *embedder, const document_t *docs, int
         printf("  Index vectors: %d\n", engine->index->count);
 
         /* Warmup */
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 3 && i < num_queries; i++) {
             int rc;
-            search_result_t *r = engine_search(engine, SAMPLE_QUERIES[i % NUM_QUERIES], 5, &rc);
+            search_result_t *r = engine_search(engine, queries[i], 5, &rc);
             free(r);
         }
 
         /* Timed search */
-        double latencies[NUM_QUERIES];
-        for (int i = 0; i < NUM_QUERIES; i++) {
+        double latencies[MAX_BENCH_QUERIES];
+        for (int i = 0; i < num_queries; i++) {
             double t1 = time_ms();
             int rc;
-            search_result_t *r = engine_search(engine, SAMPLE_QUERIES[i], 5, &rc);
+            search_result_t *r = engine_search(engine, queries[i], 5, &rc);
             latencies[i] = time_ms() - t1;
             free(r);
         }
 
         /* Sort latencies */
-        for (int i = 0; i < NUM_QUERIES - 1; i++) {
-            for (int j = i + 1; j < NUM_QUERIES; j++) {
+        for (int i = 0; i < num_queries - 1; i++) {
+            for (int j = i + 1; j < num_queries; j++) {
                 if (latencies[j] < latencies[i]) {
                     double tmp = latencies[i]; latencies[i] = latencies[j]; latencies[j] = tmp;
                 }
@@ -419,13 +414,13 @@ static void run_benchmark(bert_embedder_t *embedder, const document_t *docs, int
         }
 
         printf("  Search latency (ms): min=%.0f, p50=%.0f, p95=%.0f, max=%.0f\n",
-               latencies[0], latencies[NUM_QUERIES / 2],
-               latencies[(int)(NUM_QUERIES * 0.95)], latencies[NUM_QUERIES - 1]);
+               latencies[0], latencies[num_queries / 2],
+               latencies[(int)(num_queries * 0.95)], latencies[num_queries - 1]);
 
         /* Sample result */
         int rc;
-        search_result_t *sample = engine_search(engine, SAMPLE_QUERIES[0], 3, &rc);
-        printf("  Sample query: \"%s\"\n", SAMPLE_QUERIES[0]);
+        search_result_t *sample = engine_search(engine, queries[0], 3, &rc);
+        printf("  Sample query: \"%s\"\n", queries[0]);
         for (int i = 0; i < rc; i++) {
             printf("    %d. [%.4f] %s\n", i + 1, sample[i].score, docs[sample[i].doc_index].id);
         }
@@ -457,7 +452,11 @@ int main(int argc, char **argv) {
     const char *data_path = "data/documents.json";
     const char *model_dir = "model/berta";
     const char *query = NULL;
+#ifdef USE_ONNX
+    const char *backend = "onnx";
+#else
     const char *backend = "gguf";
+#endif
     const char *model_file __attribute__((unused)) = NULL;
     int top_k = 5;
     phrase_strategy_t strategy = STRATEGY_CONCATENATE;
