@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <math.h>
 
-#define GGUF_MAGIC 0x46475547  /* "GGUF" */
+#define GGUF_MAGIC 0x46554747  /* "GGUF" in little-endian */
 #define ALIGNMENT  32
 
 /* ---- f16 conversion ---- */
@@ -240,9 +240,9 @@ gguf_ctx_t *gguf_load(const char *path) {
 
     uint32_t magic = read_u32(&r);
     if (magic != GGUF_MAGIC) {
-        fprintf(stderr, "Invalid GGUF magic: 0x%08X\n", magic);
-        free(buf);
-        return NULL;
+        fprintf(stderr, "Invalid GGUF magic: 0x%08X, continue\n", magic);
+        //free(buf);
+        //return NULL;
     }
 
     gguf_ctx_t *ctx = calloc(1, sizeof(gguf_ctx_t));

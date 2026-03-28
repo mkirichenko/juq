@@ -124,64 +124,53 @@ bert_model_t *bert_model_load(gguf_ctx_t *ctx) {
     /* Transformer layers */
     m->layers = calloc(m->num_layers, sizeof(bert_layer_t));
     for (int i = 0; i < m->num_layers; i++) {
-        char name[128];
+        char wname[128], bname[128];
         bert_layer_t *layer = &m->layers[i];
         layer->num_heads = m->num_heads;
         layer->head_dim = m->head_dim;
 
-        #define LAYER_TENSOR(fmt) (snprintf(name, sizeof(name), fmt, i), name)
+        snprintf(wname, sizeof(wname), "blk.%d.attn_q.weight", i);
+        snprintf(bname, sizeof(bname), "blk.%d.attn_q.bias", i);
+        layer->query = load_linear(ctx, wname, bname, m->hidden_size, m->hidden_size);
 
-        layer->query = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.attn_q.weight"),
-            LAYER_TENSOR("blk.%d.attn_q.bias"),
-            m->hidden_size, m->hidden_size);
+        snprintf(wname, sizeof(wname), "blk.%d.attn_k.weight", i);
+        snprintf(bname, sizeof(bname), "blk.%d.attn_k.bias", i);
+        layer->key = load_linear(ctx, wname, bname, m->hidden_size, m->hidden_size);
 
-        layer->key = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.attn_k.weight"),
-            LAYER_TENSOR("blk.%d.attn_k.bias"),
-            m->hidden_size, m->hidden_size);
+        snprintf(wname, sizeof(wname), "blk.%d.attn_v.weight", i);
+        snprintf(bname, sizeof(bname), "blk.%d.attn_v.bias", i);
+        layer->value = load_linear(ctx, wname, bname, m->hidden_size, m->hidden_size);
 
-        layer->value = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.attn_v.weight"),
-            LAYER_TENSOR("blk.%d.attn_v.bias"),
-            m->hidden_size, m->hidden_size);
+        snprintf(wname, sizeof(wname), "blk.%d.attn_output.weight", i);
+        snprintf(bname, sizeof(bname), "blk.%d.attn_output.bias", i);
+        layer->attn_output = load_linear(ctx, wname, bname, m->hidden_size, m->hidden_size);
 
-        layer->attn_output = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.attn_output.weight"),
-            LAYER_TENSOR("blk.%d.attn_output.bias"),
-            m->hidden_size, m->hidden_size);
-
-        layer->attn_output_norm_gamma = load_tensor_data(ctx,
-            LAYER_TENSOR("blk.%d.attn_output_norm.weight"), NULL);
-        layer->attn_output_norm_beta = load_tensor_data(ctx,
-            LAYER_TENSOR("blk.%d.attn_output_norm.bias"), NULL);
+        snprintf(wname, sizeof(wname), "blk.%d.attn_output_norm.weight", i);
+        layer->attn_output_norm_gamma = load_tensor_data(ctx, wname, NULL);
+        snprintf(bname, sizeof(bname), "blk.%d.attn_output_norm.bias", i);
+        layer->attn_output_norm_beta = load_tensor_data(ctx, bname, NULL);
 
         /* FFN: up projects hidden -> intermediate, down projects back */
-        snprintf(name, sizeof(name), "blk.%d.ffn_up.weight", i);
+        snprintf(wname, sizeof(wname), "blk.%d.ffn_up.weight", i);
         int intermediate_size = m->hidden_size;
         for (uint64_t t = 0; t < ctx->n_tensors; t++) {
-            if (strcmp(ctx->tensor_infos[t].name, name) == 0) {
+            if (strcmp(ctx->tensor_infos[t].name, wname) == 0) {
                 intermediate_size = (int)ctx->tensor_infos[t].dims[1];
                 break;
             }
         }
 
-        layer->ffn_up = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.ffn_up.weight"),
-            LAYER_TENSOR("blk.%d.ffn_up.bias"),
-            m->hidden_size, intermediate_size);
+        snprintf(bname, sizeof(bname), "blk.%d.ffn_up.bias", i);
+        layer->ffn_up = load_linear(ctx, wname, bname, m->hidden_size, intermediate_size);
 
-        layer->ffn_down = load_linear(ctx,
-            LAYER_TENSOR("blk.%d.ffn_down.weight"),
-            LAYER_TENSOR("blk.%d.ffn_down.bias"),
-            intermediate_size, m->hidden_size);
+        snprintf(wname, sizeof(wname), "blk.%d.ffn_down.weight", i);
+        snprintf(bname, sizeof(bname), "blk.%d.ffn_down.bias", i);
+        layer->ffn_down = load_linear(ctx, wname, bname, intermediate_size, m->hidden_size);
 
-        layer->layer_output_norm_gamma = load_tensor_data(ctx,
-            LAYER_TENSOR("blk.%d.layer_output_norm.weight"), NULL);
-        layer->layer_output_norm_beta = load_tensor_data(ctx,
-            LAYER_TENSOR("blk.%d.layer_output_norm.bias"), NULL);
-
-        #undef LAYER_TENSOR
+        snprintf(wname, sizeof(wname), "blk.%d.layer_output_norm.weight", i);
+        layer->layer_output_norm_gamma = load_tensor_data(ctx, wname, NULL);
+        snprintf(bname, sizeof(bname), "blk.%d.layer_output_norm.bias", i);
+        layer->layer_output_norm_beta = load_tensor_data(ctx, bname, NULL);
     }
 
     return m;

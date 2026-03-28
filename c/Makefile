@@ -3,8 +3,8 @@ CFLAGS = -O3 -march=native -Wall -Wextra -std=c11 -D_GNU_SOURCE
 LDFLAGS = -lm
 
 # ONNX Runtime configuration (adjust path as needed)
-ONNXRUNTIME_DIR ?= /tmp/onnxruntime-linux-x64-1.21.0
-ONNX_CFLAGS = -DUSE_ONNX -I$(ONNXRUNTIME_DIR)/include
+ONNXRUNTIME_DIR ?= /opt/homebrew/Cellar/onnxruntime/1.24.4_1
+ONNX_CFLAGS = -DUSE_ONNX -I$(ONNXRUNTIME_DIR)/include/onnxruntime
 ONNX_LDFLAGS = -L$(ONNXRUNTIME_DIR)/lib -lonnxruntime -Wl,-rpath,$(ONNXRUNTIME_DIR)/lib
 
 # Int8 backend flags
