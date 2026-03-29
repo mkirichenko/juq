@@ -6,8 +6,11 @@
 #if defined(__AVX2__)
 #include <immintrin.h>
 #define USE_AVX2 1
+#define USE_SSE2 1
 #elif defined(__SSE2__)
 #include <emmintrin.h>
+#include <tmmintrin.h>   /* SSSE3: _mm_maddubs_epi16 */
+#include <smmintrin.h>   /* SSE4.1: _mm_cvtepi8_epi16 */
 #define USE_SSE2 1
 #endif
 
@@ -184,5 +187,92 @@ void layer_norm(const float *input, const float *gamma, const float *beta,
             out_row[i] = (row[i] - mean) * inv_std * gamma[i] + beta[i];
         }
 #endif
+    }
+}
+
+/* ---- Int8 quantization ---- */
+
+float vec_quantize_symmetric(const float *v, int8_t *out, size_t n) {
+    /* Find max absolute value */
+    float amax = 0.0f;
+    for (size_t i = 0; i < n; i++) {
+        float a = v[i] < 0 ? -v[i] : v[i];
+        if (a > amax) amax = a;
+    }
+    if (amax == 0.0f) {
+        memset(out, 0, n);
+        return 1.0f;
+    }
+    float scale = amax / 127.0f;
+    float inv_scale = 127.0f / amax;
+    for (size_t i = 0; i < n; i++) {
+        float val = v[i] * inv_scale;
+        int q = (int)(val + (val >= 0 ? 0.5f : -0.5f));
+        if (q > 127) q = 127;
+        if (q < -127) q = -127;
+        out[i] = (int8_t)q;
+    }
+    return scale;
+}
+
+/* ---- Int8 dot product ---- */
+
+int32_t vec_dot_i8(const int8_t *a, const int8_t *b, size_t n) {
+#if USE_AVX2
+    __m256i sum = _mm256_setzero_si256();
+    size_t i = 0;
+    for (; i + 32 <= n; i += 32) {
+        __m256i va = _mm256_loadu_si256((const __m256i *)(a + i));
+        __m256i vb = _mm256_loadu_si256((const __m256i *)(b + i));
+        /* Split into two 16-byte halves for signed*signed multiply */
+        /* Unpack to int16 and use madd */
+        __m256i a_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(va));
+        __m256i b_lo = _mm256_cvtepi8_epi16(_mm256_castsi256_si128(vb));
+        __m256i a_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(va, 1));
+        __m256i b_hi = _mm256_cvtepi8_epi16(_mm256_extracti128_si256(vb, 1));
+        sum = _mm256_add_epi32(sum, _mm256_madd_epi16(a_lo, b_lo));
+        sum = _mm256_add_epi32(sum, _mm256_madd_epi16(a_hi, b_hi));
+    }
+    /* Horizontal sum */
+    __m128i lo128 = _mm256_castsi256_si128(sum);
+    __m128i hi128 = _mm256_extracti128_si256(sum, 1);
+    __m128i s = _mm_add_epi32(lo128, hi128);
+    s = _mm_hadd_epi32(s, s);
+    s = _mm_hadd_epi32(s, s);
+    int32_t result = _mm_extract_epi32(s, 0);
+    for (; i < n; i++) result += (int32_t)a[i] * b[i];
+    return result;
+#elif USE_SSE2
+    __m128i sum = _mm_setzero_si128();
+    size_t i = 0;
+    for (; i + 16 <= n; i += 16) {
+        __m128i va = _mm_loadu_si128((const __m128i *)(a + i));
+        __m128i vb = _mm_loadu_si128((const __m128i *)(b + i));
+        /* Sign-extend to int16 and madd */
+        __m128i a_lo = _mm_cvtepi8_epi16(va);
+        __m128i b_lo = _mm_cvtepi8_epi16(vb);
+        __m128i a_hi = _mm_cvtepi8_epi16(_mm_srli_si128(va, 8));
+        __m128i b_hi = _mm_cvtepi8_epi16(_mm_srli_si128(vb, 8));
+        sum = _mm_add_epi32(sum, _mm_madd_epi16(a_lo, b_lo));
+        sum = _mm_add_epi32(sum, _mm_madd_epi16(a_hi, b_hi));
+    }
+    int32_t tmp[4];
+    _mm_storeu_si128((__m128i *)tmp, sum);
+    int32_t result = tmp[0] + tmp[1] + tmp[2] + tmp[3];
+    for (; i < n; i++) result += (int32_t)a[i] * b[i];
+    return result;
+#else
+    int32_t sum = 0;
+    for (size_t i = 0; i < n; i++) sum += (int32_t)a[i] * b[i];
+    return sum;
+#endif
+}
+
+/* ---- Int8 matrix-vector multiply ---- */
+
+void mat_vec_mul_i8(const int8_t *mat, const int8_t *vec, int32_t *out,
+                    int rows, int cols) {
+    for (int i = 0; i < rows; i++) {
+        out[i] = vec_dot_i8(mat + (size_t)i * cols, vec, cols);
     }
 }

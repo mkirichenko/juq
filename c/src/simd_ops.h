@@ -2,6 +2,7 @@
 #define SIMD_OPS_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  * SIMD-optimized operations for quantized model inference.
@@ -41,5 +42,19 @@ void vec_gelu(float *v, size_t n);
  *   out = gamma * (x - mean) / sqrt(var + eps) + beta */
 void layer_norm(const float *input, const float *gamma, const float *beta,
                 float *output, int seq_len, int hidden, float eps);
+
+/* ---- Int8 quantized operations ---- */
+
+/* Quantize float vector to int8 symmetrically.
+ * Returns scale factor. out[i] = round(clamp(v[i] / scale, -127, 127)) */
+float vec_quantize_symmetric(const float *v, int8_t *out, size_t n);
+
+/* Int8 dot product: returns sum(a[i] * b[i]) as int32 */
+int32_t vec_dot_i8(const int8_t *a, const int8_t *b, size_t n);
+
+/* Int8 matrix-vector multiply: out[i] = sum_j(mat[i*cols+j] * vec[j])
+ * mat is int8 [rows x cols], vec is int8 [cols], out is int32 [rows] */
+void mat_vec_mul_i8(const int8_t *mat, const int8_t *vec, int32_t *out,
+                    int rows, int cols);
 
 #endif

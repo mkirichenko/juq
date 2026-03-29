@@ -4,6 +4,9 @@
 #ifdef USE_ONNX
 #include "onnx_backend.h"
 #endif
+#ifdef USE_INT8
+#include "int8_backend.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -439,7 +442,7 @@ static void usage(void) {
     fprintf(stderr, "Usage: juq [options]\n");
     fprintf(stderr, "  --data <path>           Path to documents.json\n");
     fprintf(stderr, "  --model <path>          Model directory\n");
-    fprintf(stderr, "  --backend <name>        gguf or onnx (default: gguf)\n");
+    fprintf(stderr, "  --backend <name>        gguf, onnx, or int8 (default: gguf)\n");
     fprintf(stderr, "  --model-file <name>     ONNX model filename (default: model.onnx)\n");
     fprintf(stderr, "  --query <text>          Search query\n");
     fprintf(stderr, "  --top-k <n>             Number of results (default: 5)\n");
@@ -489,10 +492,17 @@ int main(int argc, char **argv) {
         fprintf(stderr, "ONNX backend not compiled. Rebuild with: make onnx\n");
         return 1;
 #endif
+    } else if (strcasecmp(backend, "int8") == 0) {
+#ifdef USE_INT8
+        embedder = int8_embedder_load(model_dir, model_file, query_prefix, doc_prefix);
+#else
+        fprintf(stderr, "Int8 backend not compiled. Rebuild with: make int8\n");
+        return 1;
+#endif
     } else if (strcasecmp(backend, "gguf") == 0) {
         embedder = bert_embedder_load(model_dir, query_prefix, doc_prefix);
     } else {
-        fprintf(stderr, "Unknown backend: %s (use: gguf, onnx)\n", backend);
+        fprintf(stderr, "Unknown backend: %s (use: gguf, onnx, int8)\n", backend);
         return 1;
     }
     if (!embedder) { fprintf(stderr, "Failed to load model\n"); return 1; }
