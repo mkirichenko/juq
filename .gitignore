@@ -35,7 +35,7 @@ target/
 .settings/
 
 # Model files (large, downloaded separately)
-model/
+/model/
 
 # C build artifacts
 c/build/

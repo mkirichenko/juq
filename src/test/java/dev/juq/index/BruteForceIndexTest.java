@@ -49,6 +49,32 @@ class BruteForceIndexTest {
     }
 
     @Test
+    void testSearchWithFilter() {
+        BruteForceIndex index = new BruteForceIndex();
+        index.add(0, new float[]{1.0f, 0.0f, 0.0f});
+        index.add(1, new float[]{0.9f, 0.1f, 0.0f});
+        index.add(2, new float[]{0.8f, 0.2f, 0.0f});
+
+        // Only allow doc 1 and 2
+        List<Map.Entry<Integer, Float>> results = index.search(
+            new float[]{1.0f, 0.0f, 0.0f}, 3, docId -> docId > 0);
+
+        assertEquals(2, results.size());
+        assertTrue(results.stream().noneMatch(e -> e.getKey() == 0));
+    }
+
+    @Test
+    void testSearchWithFilterReturnsEmpty() {
+        BruteForceIndex index = new BruteForceIndex();
+        index.add(0, new float[]{1.0f, 0.0f, 0.0f});
+
+        List<Map.Entry<Integer, Float>> results = index.search(
+            new float[]{1.0f, 0.0f, 0.0f}, 3, docId -> false);
+
+        assertEquals(0, results.size());
+    }
+
+    @Test
     void testResultsOrderedByScoreDescending() {
         BruteForceIndex index = new BruteForceIndex();
         index.add(0, new float[]{1.0f, 0.0f});

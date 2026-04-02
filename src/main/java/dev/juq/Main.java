@@ -11,7 +11,7 @@ import dev.juq.search.DocumentSearchEngine;
 import dev.juq.search.PhraseStrategy;
 
 import java.nio.file.Path;
-import java.util.List;
+import java.util.*;
 
 public class Main {
 
@@ -24,6 +24,8 @@ public class Main {
         int topK = 5;
         PhraseStrategy strategy = PhraseStrategy.CONCATENATE;
         boolean benchmark = false;
+        Set<String> tags = null;
+        boolean withPopularity = false;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -35,6 +37,8 @@ public class Main {
                 case "--top-k" -> topK = Integer.parseInt(args[++i]);
                 case "--strategy" -> strategy = PhraseStrategy.valueOf(args[++i].toUpperCase());
                 case "--benchmark" -> benchmark = true;
+                case "--tags" -> tags = Set.of(args[++i].split(","));
+                case "--popularity" -> withPopularity = true;
                 default -> {
                     System.err.println("Unknown option: " + args[i]);
                     printUsage();
@@ -70,20 +74,41 @@ public class Main {
                 System.out.printf("Indexed %d documents in %d ms (strategy: %s)%n",
                     docs.size(), indexMs, strategy);
 
+                if (withPopularity) {
+                    // Simulate popularity data from an external tracking system
+                    Map<String, Float> popularity = generateSamplePopularity(docs);
+                    engine.setPopularityScores(popularity);
+                    System.out.println("Popularity ranking enabled (sample data)");
+                }
+
                 long t2 = System.currentTimeMillis();
-                List<SearchResult> results = engine.search(query, topK);
+                List<SearchResult> results = engine.search(query, topK, tags);
                 long searchMs = System.currentTimeMillis() - t2;
 
                 System.out.printf("%nQuery: \"%s\" (took %d ms)%n", query, searchMs);
+                if (tags != null) {
+                    System.out.printf("Filter tags: %s%n", tags);
+                }
                 System.out.println("─".repeat(60));
                 for (int i = 0; i < results.size(); i++) {
                     SearchResult r = results.get(i);
                     System.out.printf("%d. [%.4f] %s%n", i + 1, r.score(), r.document().id());
                     System.out.printf("   phrase1: %s%n", r.document().phrase1());
                     System.out.printf("   phrase2: %s%n", r.document().phrase2());
+                    System.out.printf("   tags: %s%n", r.document().tags());
                 }
             }
         }
+    }
+
+    private static Map<String, Float> generateSamplePopularity(List<Document> docs) {
+        // Simulate: some docs are more popular than others
+        Map<String, Float> popularity = new HashMap<>();
+        Random rng = new Random(42);
+        for (Document doc : docs) {
+            popularity.put(doc.id(), rng.nextFloat() * 50);
+        }
+        return popularity;
     }
 
     private static EmbeddingModel createModel(String modelName, Path modelDir, String modelFile) throws Exception {
@@ -106,6 +131,8 @@ public class Main {
               --query <text>        Search query
               --top-k <n>           Number of results (default: 5)
               --strategy <name>     CONCATENATE|AVERAGE|MAX_SIM (default: CONCATENATE)
+              --tags <t1,t2,...>    Filter results to documents matching these tags
+              --popularity          Enable popularity-based re-ranking (sample data)
               --benchmark           Run benchmark suite
             """);
     }

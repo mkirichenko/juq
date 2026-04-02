@@ -1,6 +1,7 @@
 package dev.juq.index;
 
 import java.util.*;
+import java.util.function.IntPredicate;
 
 public class BruteForceIndex implements VectorIndex {
 
@@ -15,17 +16,25 @@ public class BruteForceIndex implements VectorIndex {
 
     @Override
     public List<Map.Entry<Integer, Float>> search(float[] queryVector, int topK) {
+        return search(queryVector, topK, null);
+    }
+
+    @Override
+    public List<Map.Entry<Integer, Float>> search(float[] queryVector, int topK, IntPredicate filter) {
         PriorityQueue<Map.Entry<Integer, Float>> heap = new PriorityQueue<>(
             topK, Comparator.comparingDouble(Map.Entry::getValue)
         );
 
         for (int i = 0; i < vectors.size(); i++) {
+            int docId = docIds.get(i);
+            if (filter != null && !filter.test(docId)) continue;
+
             float score = dotProduct(queryVector, vectors.get(i));
             if (heap.size() < topK) {
-                heap.offer(Map.entry(docIds.get(i), score));
+                heap.offer(Map.entry(docId, score));
             } else if (score > heap.peek().getValue()) {
                 heap.poll();
-                heap.offer(Map.entry(docIds.get(i), score));
+                heap.offer(Map.entry(docId, score));
             }
         }
 

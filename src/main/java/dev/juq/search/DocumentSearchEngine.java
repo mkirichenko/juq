@@ -6,6 +6,7 @@ import dev.juq.model.Document;
 import dev.juq.model.SearchResult;
 
 import java.util.*;
+import java.util.function.IntPredicate;
 
 public class DocumentSearchEngine {
 
@@ -15,10 +16,34 @@ public class DocumentSearchEngine {
     private final Map<Integer, Document> documents = new HashMap<>();
     private int nextId = 0;
 
+    /** Popularity scores by document id (from external tracking system). */
+    private Map<String, Float> popularityScores = Map.of();
+    private float popularityWeight = 0.2f;
+    private float popularityPivot = 10.0f;
+
     public DocumentSearchEngine(EmbeddingModel model, VectorIndex index, PhraseStrategy strategy) {
         this.model = model;
         this.index = index;
         this.strategy = strategy;
+    }
+
+    /**
+     * Set popularity scores from an external tracking system.
+     * Works like Elasticsearch's rank_feature — higher values boost documents
+     * in search results using a saturation function: score += weight * (value / (value + pivot)).
+     *
+     * @param scores     map of document id to popularity value (e.g. view count, click count)
+     * @param weight     how much popularity affects the final score (default 0.2)
+     * @param pivot      the value at which the saturation function returns 0.5 (default 10.0)
+     */
+    public void setPopularityScores(Map<String, Float> scores, float weight, float pivot) {
+        this.popularityScores = scores;
+        this.popularityWeight = weight;
+        this.popularityPivot = pivot;
+    }
+
+    public void setPopularityScores(Map<String, Float> scores) {
+        setPopularityScores(scores, 0.2f, 10.0f);
     }
 
     public void indexDocuments(List<Document> docs) {
@@ -50,31 +75,87 @@ public class DocumentSearchEngine {
         }
     }
 
+    /**
+     * Search without tag filtering.
+     */
     public List<SearchResult> search(String query, int topK) {
+        return search(query, topK, null);
+    }
+
+    /**
+     * Search with tag-based access filtering and popularity ranking.
+     *
+     * @param query       the search query text
+     * @param topK        maximum number of results to return
+     * @param allowedTags if non-null, only documents having at least one tag in common
+     *                    with this set are returned (like a user's JWT-derived permissions)
+     */
+    public List<SearchResult> search(String query, int topK, Set<String> allowedTags) {
         float[] queryVector = model.embed(model.queryPrefix() + query);
 
+        IntPredicate tagFilter = buildTagFilter(allowedTags);
+
+        List<Map.Entry<Integer, Float>> raw;
         if (strategy == PhraseStrategy.MAX_SIM) {
-            // Fetch more results since there are 2 entries per doc, then deduplicate
-            List<Map.Entry<Integer, Float>> raw = index.search(queryVector, topK * 2);
+            raw = index.search(queryVector, topK * 2, tagFilter);
             Map<Integer, Float> bestScores = new LinkedHashMap<>();
             for (Map.Entry<Integer, Float> entry : raw) {
                 bestScores.merge(entry.getKey(), entry.getValue(), Math::max);
             }
-            return bestScores.entrySet().stream()
+            raw = bestScores.entrySet().stream()
                 .sorted((a, b) -> Float.compare(b.getValue(), a.getValue()))
                 .limit(topK)
+                .toList();
+        } else {
+            raw = index.search(queryVector, topK, tagFilter);
+        }
+
+        if (popularityScores.isEmpty()) {
+            return raw.stream()
                 .map(e -> new SearchResult(documents.get(e.getKey()), e.getValue()))
                 .toList();
         }
 
-        List<Map.Entry<Integer, Float>> raw = index.search(queryVector, topK);
+        // Re-rank with popularity boost using saturation function
         return raw.stream()
-            .map(e -> new SearchResult(documents.get(e.getKey()), e.getValue()))
+            .map(e -> {
+                Document doc = documents.get(e.getKey());
+                float vectorScore = e.getValue();
+                float popularity = popularityScores.getOrDefault(doc.id(), 0.0f);
+                float boost = popularityWeight * saturation(popularity, popularityPivot);
+                return new SearchResult(doc, vectorScore + boost);
+            })
+            .sorted(Comparator.reverseOrder())
+            .limit(topK)
             .toList();
+    }
+
+    /**
+     * Saturation function (same as Elasticsearch rank_feature saturation).
+     * Returns a value in [0, 1) that grows quickly for small inputs and
+     * saturates for large ones. At value == pivot, returns 0.5.
+     */
+    static float saturation(float value, float pivot) {
+        if (value <= 0) return 0;
+        return value / (value + pivot);
     }
 
     public int documentCount() {
         return documents.size();
+    }
+
+    private IntPredicate buildTagFilter(Set<String> allowedTags) {
+        if (allowedTags == null || allowedTags.isEmpty()) return null;
+        return docId -> {
+            Document doc = documents.get(docId);
+            if (doc == null) return false;
+            Set<String> docTags = doc.tags();
+            if (docTags.isEmpty()) return false;
+            for (String tag : docTags) {
+                if (allowedTags.contains(tag)) return true;
+            }
+            return false;
+        };
     }
 
     private static float[] average(float[] a, float[] b) {
