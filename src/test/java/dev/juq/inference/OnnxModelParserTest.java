@@ -1,0 +1,87 @@
+package dev.juq.inference;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
+import static org.junit.jupiter.api.Assertions.*;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+class OnnxModelParserTest {
+
+    private static final Path MODEL_PATH = Path.of("model", "minilm", "model.onnx");
+
+    static boolean modelExists() {
+        return Files.exists(MODEL_PATH);
+    }
+
+    @Test
+    @EnabledIf("modelExists")
+    void testLoadModel() throws IOException {
+        OnnxModelParser parser = OnnxModelParser.load(MODEL_PATH);
+
+        // MiniLM-L6 should have many tensors (embeddings + 6 layers * ~16 tensors each)
+        assertTrue(parser.tensorCount() > 50,
+            "Expected >50 tensors, got " + parser.tensorCount());
+    }
+
+    @Test
+    @EnabledIf("modelExists")
+    void testWordEmbeddingsShape() throws IOException {
+        OnnxModelParser parser = OnnxModelParser.load(MODEL_PATH);
+
+        // Try common prefixes
+        OnnxModelParser.TensorData we = parser.getTensor("embeddings.word_embeddings.weight");
+        if (we == null) we = parser.getTensor("bert.embeddings.word_embeddings.weight");
+
+        assertNotNull(we, "word_embeddings tensor should exist");
+        assertEquals(2, we.dims.length, "word_embeddings should be 2D");
+        assertTrue(we.dims[0] > 10000, "vocab size should be >10k");
+        assertEquals(384, we.dims[1], "MiniLM hidden size should be 384");
+    }
+
+    @Test
+    @EnabledIf("modelExists")
+    void testTensorDataConversion() throws IOException {
+        OnnxModelParser parser = OnnxModelParser.load(MODEL_PATH);
+
+        // Find any float tensor
+        for (OnnxModelParser.TensorData t : parser.getAllTensors().values()) {
+            if (t.dataType == OnnxModelParser.ONNX_FLOAT && t.numElements < 1000) {
+                float[] data = t.toFloat();
+                assertEquals(t.numElements, data.length);
+                // At least some values should be non-zero
+                boolean hasNonZero = false;
+                for (float v : data) {
+                    if (v != 0) { hasNonZero = true; break; }
+                }
+                assertTrue(hasNonZero, "Tensor data should contain non-zero values");
+                return;
+            }
+        }
+    }
+
+    @Test
+    @EnabledIf("modelExists")
+    void testLayerTensorsExist() throws IOException {
+        OnnxModelParser parser = OnnxModelParser.load(MODEL_PATH);
+
+        // Detect prefix
+        String prefix = "";
+        if (parser.getTensor("bert.embeddings.word_embeddings.weight") != null) {
+            prefix = "bert.";
+        }
+
+        // MiniLM-L6 has 6 layers
+        for (int i = 0; i < 6; i++) {
+            String qName = prefix + "encoder.layer." + i + ".attention.self.query.weight";
+            assertNotNull(parser.getTensor(qName),
+                "Layer " + i + " query weight should exist: " + qName);
+        }
+
+        // Layer 6 should NOT exist
+        String nonExistent = prefix + "encoder.layer.6.attention.self.query.weight";
+        assertNull(parser.getTensor(nonExistent));
+    }
+}

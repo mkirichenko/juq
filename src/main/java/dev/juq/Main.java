@@ -4,6 +4,7 @@ import dev.juq.bench.Benchmark;
 import dev.juq.data.JsonDocumentLoader;
 import dev.juq.embedding.EmbeddingModel;
 import dev.juq.embedding.OnnxEmbeddingModel;
+import dev.juq.embedding.PureJavaEmbeddingModel;
 import dev.juq.index.BruteForceIndex;
 import dev.juq.model.Document;
 import dev.juq.model.SearchResult;
@@ -26,6 +27,7 @@ public class Main {
         boolean benchmark = false;
         Set<String> tags = null;
         boolean withPopularity = false;
+        String backend = "onnx";
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -39,6 +41,7 @@ public class Main {
                 case "--benchmark" -> benchmark = true;
                 case "--tags" -> tags = Set.of(args[++i].split(","));
                 case "--popularity" -> withPopularity = true;
+                case "--backend" -> backend = args[++i].toLowerCase();
                 default -> {
                     System.err.println("Unknown option: " + args[i]);
                     printUsage();
@@ -56,7 +59,8 @@ public class Main {
         System.out.printf("Loading model '%s' from %s ...%n", modelName, modelDir);
         long t0 = System.currentTimeMillis();
 
-        try (EmbeddingModel model = createModel(modelName, modelDir, modelFile)) {
+        System.out.printf("Backend: %s%n", backend);
+        try (EmbeddingModel model = createModel(modelName, modelDir, modelFile, backend)) {
             long modelLoadMs = System.currentTimeMillis() - t0;
             System.out.printf("Model loaded in %d ms (dimensions: %d)%n", modelLoadMs, model.dimensions());
 
@@ -111,13 +115,24 @@ public class Main {
         return popularity;
     }
 
-    private static EmbeddingModel createModel(String modelName, Path modelDir, String modelFile) throws Exception {
-        return switch (modelName) {
-            case "minilm" -> new OnnxEmbeddingModel(modelDir, modelFile, "", "");
-            case "e5-small" -> new OnnxEmbeddingModel(modelDir, modelFile, "query: ", "passage: ");
-            case "berta" -> new OnnxEmbeddingModel(modelDir, modelFile, "search_query: ", "search_document: ");
+    private static EmbeddingModel createModel(String modelName, Path modelDir,
+                                                String modelFile, String backend) throws Exception {
+        record ModelConfig(String queryPrefix, String docPrefix) {}
+        ModelConfig config = switch (modelName) {
+            case "minilm" -> new ModelConfig("", "");
+            case "e5-small" -> new ModelConfig("query: ", "passage: ");
+            case "berta" -> new ModelConfig("search_query: ", "search_document: ");
             default -> throw new IllegalArgumentException(
                 "Unknown model: " + modelName + ". Available: minilm, e5-small, berta");
+        };
+
+        return switch (backend) {
+            case "onnx" -> new OnnxEmbeddingModel(modelDir, modelFile,
+                config.queryPrefix(), config.docPrefix());
+            case "pure-java" -> new PureJavaEmbeddingModel(modelDir, modelFile,
+                config.queryPrefix(), config.docPrefix());
+            default -> throw new IllegalArgumentException(
+                "Unknown backend: " + backend + ". Available: onnx, pure-java");
         };
     }
 
@@ -128,6 +143,7 @@ public class Main {
               --model <path>        Base model directory (default: model/)
               --model-name <name>   Model to use: minilm, e5-small, berta (default: minilm)
               --model-file <name>   ONNX model filename (default: model.onnx)
+              --backend <name>      onnx|pure-java (default: onnx)
               --query <text>        Search query
               --top-k <n>           Number of results (default: 5)
               --strategy <name>     CONCATENATE|AVERAGE|MAX_SIM (default: CONCATENATE)
