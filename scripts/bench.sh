@@ -11,8 +11,8 @@
 #   ./scripts/bench.sh build      # mvn package + classpath
 #   ./scripts/bench.sh en-onnx    # ONNX backend, EN docs (minilm)
 #   ./scripts/bench.sh ru-onnx    # ONNX backend, RU docs (berta multilingual)
-#   ./scripts/bench.sh en-pure    # pure-java backend, EN docs  (currently broken)
-#   ./scripts/bench.sh ru-pure    # pure-java backend, RU docs  (currently broken)
+#   ./scripts/bench.sh en-pure    # pure-java backend, EN docs (minilm)
+#   ./scripts/bench.sh ru-pure    # pure-java backend, RU docs (berta float)
 
 set -euo pipefail
 
@@ -48,7 +48,11 @@ case "${1:-}" in
   ru-onnx)  run onnx      berta  data/documents-ru.json ;;
   ru-int8)  run onnx      berta  data/documents-ru.json --model-file model_int8.onnx ;;
   en-pure)  run pure-java minilm data/documents.json ;;
-  ru-pure)  run pure-java berta  data/documents-ru.json --model-file model_int8.onnx ;;
+  # pure-java uses float model.onnx; we quantize to int8 at load time. The
+  # pre-quantized model_int8.onnx uses MatMulInteger + per-row scales that
+  # our minimal ONNX loader doesn't fully decode.
+  ru-pure)  run pure-java berta  data/documents-ru.json ;;
+  ru-pure-tiny)  run pure-java berta  data/documents-tiny-ru.json ;;
   *)
     echo "Usage: $0 {build|en-onnx|ru-onnx|en-pure|ru-pure}" >&2
     exit 1

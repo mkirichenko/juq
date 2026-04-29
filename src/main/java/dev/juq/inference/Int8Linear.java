@@ -34,7 +34,15 @@ public class Int8Linear {
                                        int inFeatures, int outFeatures) {
         OnnxModelParser.TensorData wt = parser.getTensor(weightName);
         if (wt == null) {
-            throw new IllegalArgumentException("Weight tensor not found: " + weightName);
+            String resolved = parser.resolveWeightFromBias(biasName, inFeatures, outFeatures);
+            if (resolved != null) {
+                wt = parser.getTensor(resolved);
+            }
+            if (wt == null) {
+                throw new IllegalArgumentException(
+                    "Weight tensor not found: " + weightName
+                    + " (also could not resolve via bias " + biasName + ")");
+            }
         }
 
         int nWeights = outFeatures * inFeatures;

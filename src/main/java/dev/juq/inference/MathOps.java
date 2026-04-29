@@ -18,7 +18,17 @@ import jdk.incubator.vector.VectorSpecies;
 public final class MathOps {
 
     private static final VectorSpecies<Float> F_SPECIES = FloatVector.SPECIES_PREFERRED;
-    private static final VectorSpecies<Integer> I_SPECIES = IntVector.SPECIES_PREFERRED;
+
+    /**
+     * Int species used for int8 widening. {@link VectorShape}'s minimum bit-size is 64,
+     * so the matching byte species needs ≥ 8 lanes — i.e. an int species of ≥ 256 bits.
+     * On platforms whose preferred shape is smaller (e.g. ARM NEON at 128 bits) we step
+     * up to 256 bits; the JVM emulates as needed.
+     */
+    private static final VectorSpecies<Integer> I_SPECIES =
+            IntVector.SPECIES_PREFERRED.vectorBitSize() >= 256
+                    ? IntVector.SPECIES_PREFERRED
+                    : IntVector.SPECIES_256;
 
     /**
      * Byte species whose lane count matches {@link #I_SPECIES}, so that a byte vector

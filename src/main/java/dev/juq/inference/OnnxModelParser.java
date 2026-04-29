@@ -5,10 +5,14 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Minimal ONNX protobuf parser that extracts initializer tensors.
@@ -101,6 +105,21 @@ public class OnnxModelParser {
     }
 
     private final Map<String, TensorData> tensors = new HashMap<>();
+    private final List<NodeInfo> nodes = new ArrayList<>();
+    private final Map<String, NodeInfo> producerByOutput = new HashMap<>();
+
+    /** Lightweight view of an ONNX graph node — just what we need for weight resolution. */
+    private static class NodeInfo {
+        final String opType;
+        final List<String> inputs;
+        final List<String> outputs;
+
+        NodeInfo(String opType, List<String> inputs, List<String> outputs) {
+            this.opType = opType;
+            this.inputs = inputs;
+            this.outputs = outputs;
+        }
+    }
 
     private OnnxModelParser() {}
 
@@ -117,12 +136,125 @@ public class OnnxModelParser {
         return tensors.get(name);
     }
 
+    /**
+     * Resolve a logical float tensor: if {@code name} exists, return it as float;
+     * otherwise look for an int8 quantized counterpart {@code name + "_quantized"}
+     * (with {@code "_scale"} and optional {@code "_zero_point"}) and dequantize.
+     * Returns {@code null} if neither pattern is present.
+     *
+     * <p>Used for ONNX exports produced by quantization tools that replace float
+     * embedding/weight tables with their int8 + scale + zero-point equivalents.
+     */
+    public float[] getFloatOrDequantized(String name) {
+        TensorData direct = tensors.get(name);
+        if (direct != null) return direct.toFloat();
+
+        TensorData q = tensors.get(name + "_quantized");
+        TensorData scale = tensors.get(name + "_scale");
+        if (q == null || scale == null) return null;
+
+        float[] scaleF = scale.toFloat();
+        // scale may be a scalar (per-tensor) or per-row (per-channel). Per-row is broadcast
+        // along the last dim of the quantized tensor.
+        int rows = (int) (scaleF.length > 1 ? q.dims[0] : 1);
+        int cols = (int) (q.numElements / Math.max(rows, 1));
+
+        TensorData zp = tensors.get(name + "_zero_point");
+        int[] zpI;
+        if (zp == null) {
+            zpI = new int[Math.max(scaleF.length, 1)];
+        } else if (zp.numElements == 1) {
+            zpI = new int[]{ zeroPointAt(zp, 0) };
+        } else {
+            zpI = new int[(int) zp.numElements];
+            for (int i = 0; i < zpI.length; i++) zpI[i] = zeroPointAt(zp, i);
+        }
+
+        float[] out = new float[(int) q.numElements];
+        if (scaleF.length == 1) {
+            float s = scaleF[0];
+            int z = zpI[0];
+            for (int i = 0; i < out.length; i++) {
+                out[i] = (qValueAt(q, i) - z) * s;
+            }
+        } else {
+            for (int r = 0; r < rows; r++) {
+                float s = scaleF[r];
+                int z = zpI.length == 1 ? zpI[0] : zpI[r];
+                int base = r * cols;
+                for (int c = 0; c < cols; c++) {
+                    out[base + c] = (qValueAt(q, base + c) - z) * s;
+                }
+            }
+        }
+        return out;
+    }
+
+    private static int qValueAt(TensorData t, int i) {
+        return switch (t.dataType) {
+            case ONNX_INT8 -> t.rawData[i];
+            case ONNX_UINT8 -> t.rawData[i] & 0xFF;
+            default -> throw new IllegalStateException(
+                "Unsupported quantized dtype: " + t.dataType + " for " + t.name);
+        };
+    }
+
+    private static int zeroPointAt(TensorData t, int i) {
+        return qValueAt(t, i);
+    }
+
     public Map<String, TensorData> getAllTensors() {
         return tensors;
     }
 
     public int tensorCount() {
         return tensors.size();
+    }
+
+    /**
+     * Resolve the weight initializer feeding a named bias.
+     *
+     * Modern ONNX exports preserve PyTorch parameter names for biases
+     * ({@code encoder.layer.0.attention.self.query.bias}) but give MatMul weight
+     * initializers anonymous names ({@code onnx::MatMul_2027}). We find the Add node
+     * consuming the bias, walk backward through the graph, and pick the initializer
+     * matching {@code inFeatures * outFeatures} elements (or the largest one we find).
+     *
+     * @return the resolved tensor name, or {@code null} if no candidate found.
+     */
+    public String resolveWeightFromBias(String biasName, int inFeatures, int outFeatures) {
+        long expected = (long) inFeatures * outFeatures;
+        for (NodeInfo n : nodes) {
+            if (!"Add".equals(n.opType)) continue;
+            if (!n.inputs.contains(biasName)) continue;
+
+            Deque<String> queue = new ArrayDeque<>();
+            for (String in : n.inputs) {
+                if (!in.equals(biasName)) queue.add(in);
+            }
+            Set<String> visited = new HashSet<>();
+            String fallback = null;
+            long fallbackSize = -1;
+            while (!queue.isEmpty()) {
+                String t = queue.poll();
+                if (t.isEmpty() || !visited.add(t)) continue;
+
+                TensorData td = tensors.get(t);
+                if (td != null) {
+                    if (t.equals(biasName)) continue;
+                    if (td.numElements == expected) return t;
+                    if (td.numElements > fallbackSize) {
+                        fallbackSize = td.numElements;
+                        fallback = t;
+                    }
+                    continue;
+                }
+                NodeInfo prod = producerByOutput.get(t);
+                if (prod != null) queue.addAll(prod.inputs);
+            }
+            if (fallback != null) return fallback;
+        }
+        return null;
     }
 
     // --- Protobuf reader ---
@@ -199,7 +331,7 @@ public class OnnxModelParser {
     }
 
     /**
-     * GraphProto: field 5 = initializer (repeated TensorProto)
+     * GraphProto: field 1 = node (repeated NodeProto), field 5 = initializer (repeated TensorProto)
      */
     private void parseGraphProto(PbReader r) {
         while (r.pos < r.end) {
@@ -207,12 +339,69 @@ public class OnnxModelParser {
             int field = (int) (tag >> 3);
             int wire = (int) (tag & 7);
 
-            if (field == 5 && wire == PB_BYTES) {
+            if (field == 1 && wire == PB_BYTES) {
+                parseNodeProto(r.readSubMessage());
+            } else if (field == 5 && wire == PB_BYTES) {
                 parseTensorProto(r.readSubMessage());
             } else {
                 r.skip(wire);
             }
         }
+    }
+
+    /**
+     * NodeProto fields:
+     *   1: input (repeated string)
+     *   2: output (repeated string)
+     *   3: name (string)
+     *   4: op_type (string)
+     *   6: attribute (repeated AttributeProto) — skipped
+     */
+    private void parseNodeProto(PbReader r) {
+        List<String> inputs = new ArrayList<>();
+        List<String> outputs = new ArrayList<>();
+        String opType = "";
+
+        while (r.pos < r.end) {
+            long tag = r.readVarint();
+            int field = (int) (tag >> 3);
+            int wire = (int) (tag & 7);
+
+            switch (field) {
+                case 1 -> {
+                    if (wire == PB_BYTES) {
+                        int len = (int) r.readVarint();
+                        inputs.add(new String(r.data, r.pos, len, java.nio.charset.StandardCharsets.UTF_8));
+                        r.pos += len;
+                    } else {
+                        r.skip(wire);
+                    }
+                }
+                case 2 -> {
+                    if (wire == PB_BYTES) {
+                        int len = (int) r.readVarint();
+                        outputs.add(new String(r.data, r.pos, len, java.nio.charset.StandardCharsets.UTF_8));
+                        r.pos += len;
+                    } else {
+                        r.skip(wire);
+                    }
+                }
+                case 4 -> {
+                    if (wire == PB_BYTES) {
+                        int len = (int) r.readVarint();
+                        opType = new String(r.data, r.pos, len, java.nio.charset.StandardCharsets.UTF_8);
+                        r.pos += len;
+                    } else {
+                        r.skip(wire);
+                    }
+                }
+                default -> r.skip(wire);
+            }
+        }
+
+        NodeInfo info = new NodeInfo(opType, inputs, outputs);
+        nodes.add(info);
+        for (String out : outputs) producerByOutput.put(out, info);
     }
 
     /**

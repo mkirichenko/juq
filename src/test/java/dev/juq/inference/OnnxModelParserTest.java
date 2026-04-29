@@ -73,15 +73,22 @@ class OnnxModelParserTest {
             prefix = "bert.";
         }
 
-        // MiniLM-L6 has 6 layers
+        // ONNX exports preserve bias names but typically rename matmul weights
+        // to anonymous initializers. Check the bias for layer existence and the
+        // graph walker for the corresponding weight tensor.
         for (int i = 0; i < 6; i++) {
-            String qName = prefix + "encoder.layer." + i + ".attention.self.query.weight";
-            assertNotNull(parser.getTensor(qName),
-                "Layer " + i + " query weight should exist: " + qName);
+            String biasName = prefix + "encoder.layer." + i + ".attention.self.query.bias";
+            assertNotNull(parser.getTensor(biasName),
+                "Layer " + i + " query bias should exist: " + biasName);
+
+            String resolved = parser.resolveWeightFromBias(biasName, 384, 384);
+            assertNotNull(resolved,
+                "Layer " + i + " query weight should be resolvable from bias: " + biasName);
+            assertNotNull(parser.getTensor(resolved),
+                "Resolved weight tensor should exist: " + resolved);
         }
 
         // Layer 6 should NOT exist
-        String nonExistent = prefix + "encoder.layer.6.attention.self.query.weight";
-        assertNull(parser.getTensor(nonExistent));
+        assertNull(parser.getTensor(prefix + "encoder.layer.6.attention.self.query.bias"));
     }
 }

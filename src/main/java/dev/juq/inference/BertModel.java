@@ -69,14 +69,21 @@ public class BertModel implements AutoCloseable {
         float[] embGamma = getFloatTensor(onnx, prefix + "embeddings.LayerNorm.weight");
         float[] embBeta = getFloatTensor(onnx, prefix + "embeddings.LayerNorm.bias");
 
-        // Detect hidden_size from word_embeddings dims
+        // Detect hidden_size from word_embeddings dims (direct or quantized)
         OnnxModelParser.TensorData weTensor = onnx.getTensor(prefix + "embeddings.word_embeddings.weight");
+        if (weTensor == null) {
+            weTensor = onnx.getTensor(prefix + "embeddings.word_embeddings.weight_quantized");
+        }
+        if (weTensor == null) {
+            throw new IllegalStateException("word_embeddings tensor not found");
+        }
         int hiddenSize = (int) weTensor.dims[weTensor.dims.length - 1];
 
-        // Detect num_layers
+        // Detect num_layers — the bias keeps its PyTorch name in ONNX exports,
+        // while the weight initializer is often anonymous (resolved via the graph).
         int numLayers = 0;
         for (int i = 0; i < 100; i++) {
-            if (onnx.getTensor(prefix + "encoder.layer." + i + ".attention.self.query.weight") != null) {
+            if (onnx.getTensor(prefix + "encoder.layer." + i + ".attention.self.query.bias") != null) {
                 numLayers = i + 1;
             } else {
                 break;
@@ -259,11 +266,11 @@ public class BertModel implements AutoCloseable {
     private static String detectPrefix(OnnxModelParser onnx) {
         String[] prefixes = {"", "bert.", "model."};
         for (String p : prefixes) {
-            if (onnx.getTensor(p + "embeddings.word_embeddings.weight") != null) {
+            if (onnx.getTensor(p + "embeddings.word_embeddings.weight") != null
+                    || onnx.getTensor(p + "embeddings.word_embeddings.weight_quantized") != null) {
                 return p;
             }
         }
-        // Try to find any tensor with "word_embeddings"
         for (String name : onnx.getAllTensors().keySet()) {
             int idx = name.indexOf("embeddings.word_embeddings");
             if (idx >= 0) {
@@ -274,11 +281,11 @@ public class BertModel implements AutoCloseable {
     }
 
     private static float[] getFloatTensor(OnnxModelParser onnx, String name) {
-        OnnxModelParser.TensorData t = onnx.getTensor(name);
-        if (t == null) {
+        float[] resolved = onnx.getFloatOrDequantized(name);
+        if (resolved == null) {
             throw new IllegalStateException("Tensor not found: " + name);
         }
-        return t.toFloat();
+        return resolved;
     }
 
     @Override
