@@ -223,7 +223,7 @@ public class OnnxModelParser {
      *   5: int32_data (repeated int32, packed)
      *   7: int64_data (repeated int64, packed)
      *   8: name (string)
-     *  13: raw_data (bytes)
+     *   9: raw_data (bytes)
      */
     private void parseTensorProto(PbReader r) {
         List<Long> dims = new ArrayList<>();
@@ -278,7 +278,7 @@ public class OnnxModelParser {
                     name = new String(r.data, r.pos, len, java.nio.charset.StandardCharsets.UTF_8);
                     r.pos += len;
                 }
-                case 13 -> rawData = r.readBytes(); // raw_data
+                case 9 -> rawData = r.readBytes(); // raw_data
                 default -> r.skip(wire);
             }
         }
