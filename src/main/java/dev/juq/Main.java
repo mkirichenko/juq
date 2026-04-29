@@ -68,7 +68,7 @@ public class Main {
             System.out.printf("Loaded %d documents%n", docs.size());
 
             if (benchmark) {
-                Benchmark.run(model, docs);
+                Benchmark.run(model, docs, dataPath);
             } else {
                 DocumentSearchEngine engine = new DocumentSearchEngine(model, new BruteForceIndex(), strategy);
 

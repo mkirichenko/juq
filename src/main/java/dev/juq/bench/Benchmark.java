@@ -7,12 +7,13 @@ import dev.juq.model.SearchResult;
 import dev.juq.search.DocumentSearchEngine;
 import dev.juq.search.PhraseStrategy;
 
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 
 public class Benchmark {
 
-    private static final String[] SAMPLE_QUERIES = {
+    private static final String[] SAMPLE_QUERIES_EN = {
         "machine learning algorithms",
         "climate change impact",
         "software engineering best practices",
@@ -24,12 +25,26 @@ public class Benchmark {
         "modern web development",
         "quantum computing applications"
     };
+    private static final String[] SAMPLE_QUERIES_RU = {
+        "алгоритмы машинного обучения",
+        "последствия изменения климата",
+        "лучшие практики разработки программного обеспечения",
+        "рецепты здорового питания",
+        "миссии по исследованию космоса",
+        "анализ финансовых рынков",
+        "этика искусственного интеллекта",
+        "возобновляемые источники энергии",
+        "современная веб-разработка",
+        "применение квантовых вычислений"
+    };
 
     private static final int WARMUP_QUERIES = 3;
-    private static final int TIMED_QUERIES = SAMPLE_QUERIES.length;
 
-    public static void run(EmbeddingModel model, List<Document> docs) {
+    public static void run(EmbeddingModel model, List<Document> docs, String dataPath) {
+        String[] queries = pickQueries(dataPath);
+        int timedQueries = queries.length;
         System.out.println("\n=== BENCHMARK ===\n");
+        System.out.printf("Query language: %s%n", queries == SAMPLE_QUERIES_RU ? "ru" : "en");
 
         for (PhraseStrategy strategy : PhraseStrategy.values()) {
             System.out.printf("--- Strategy: %s ---%n", strategy);
@@ -47,14 +62,14 @@ public class Benchmark {
 
             // Warmup
             for (int i = 0; i < WARMUP_QUERIES; i++) {
-                engine.search(SAMPLE_QUERIES[i % SAMPLE_QUERIES.length], 5);
+                engine.search(queries[i % queries.length], 5);
             }
 
             // Timed search
-            long[] latencies = new long[TIMED_QUERIES];
-            for (int i = 0; i < TIMED_QUERIES; i++) {
+            long[] latencies = new long[timedQueries];
+            for (int i = 0; i < timedQueries; i++) {
                 long t1 = System.nanoTime();
-                engine.search(SAMPLE_QUERIES[i], 5);
+                engine.search(queries[i], 5);
                 latencies[i] = (System.nanoTime() - t1) / 1_000_000;
             }
 
@@ -66,12 +81,16 @@ public class Benchmark {
                 latencies[latencies.length - 1]);
 
             // Show sample result
-            List<SearchResult> sample = engine.search(SAMPLE_QUERIES[0], 3);
-            System.out.printf("  Sample query: \"%s\"%n", SAMPLE_QUERIES[0]);
+            List<SearchResult> sample = engine.search(queries[0], 3);
+            System.out.printf("  Sample query: \"%s\"%n", queries[0]);
             for (int i = 0; i < sample.size(); i++) {
                 System.out.printf("    %d. [%.4f] %s%n", i + 1, sample.get(i).score(), sample.get(i).document().id());
             }
             System.out.println();
         }
+    }
+
+    private static String[] pickQueries(String dataPath) {
+        return dataPath.endsWith("-ru.json") ? SAMPLE_QUERIES_RU : SAMPLE_QUERIES_EN;
     }
 }

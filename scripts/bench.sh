@@ -46,6 +46,7 @@ case "${1:-}" in
   build)    build ;;
   en-onnx)  run onnx      minilm data/documents.json ;;
   ru-onnx)  run onnx      berta  data/documents-ru.json ;;
+  ru-int8)  run onnx      berta  data/documents-ru.json --model-file model_int8.onnx ;;
   en-pure)  run pure-java minilm data/documents.json ;;
   ru-pure)  run pure-java berta  data/documents-ru.json --model-file model_int8.onnx ;;
   *)
