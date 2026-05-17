@@ -1,5 +1,7 @@
 package dev.juq.index;
 
+import dev.juq.inference.MathOps;
+
 import java.util.*;
 import java.util.function.IntPredicate;
 
@@ -29,7 +31,8 @@ public class BruteForceIndex implements VectorIndex {
             int docId = docIds.get(i);
             if (filter != null && !filter.test(docId)) continue;
 
-            float score = dotProduct(queryVector, vectors.get(i));
+            float[] v = vectors.get(i);
+            float score = MathOps.dotProduct(queryVector, 0, v, 0, v.length);
             if (heap.size() < topK) {
                 heap.offer(Map.entry(docId, score));
             } else if (score > heap.peek().getValue()) {
@@ -46,13 +49,5 @@ public class BruteForceIndex implements VectorIndex {
     @Override
     public int size() {
         return vectors.size();
-    }
-
-    private static float dotProduct(float[] a, float[] b) {
-        float sum = 0;
-        for (int i = 0; i < a.length; i++) {
-            sum += a[i] * b[i];
-        }
-        return sum;
     }
 }
